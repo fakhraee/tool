@@ -1,0 +1,135 @@
+#!/usr/bin/env bash
+# @virt @virsh @ssh
+# echo -e 'ls\nq'|vh
+
+
+VIRSH='/usr/bin/virsh'
+URI='qemu:///system'
+bind -x '"\C-i": "vcomplete"' &> /dev/null
+#source /etc/bash_completion
+
+
+vcomplete() {
+  list_domains -1
+#  COMPREPLY=(hi bye)
+#  for completion in "${COMPREPLY[@]}"; do echo "$completion"; done | column
+#  compgen $COMPREPLY[@]
+#  complete -W "hi bye"
+}
+
+
+usage() {
+cat << EOF
+[ls] on|off
+  list machines
+
+[vls] domain
+  list volumes of a domain
+
+EOF
+}
+
+
+list_domains() {
+  case "${1}" in
+    -1)
+      ${VIRSH} -c ${URI} list --name --all
+      return
+      ;;
+    on)
+      all_or='state-running'
+      ;;
+    off)
+      all_or='state-shutoff'
+      ;;
+    "")
+      all_or='all'
+      ;;
+    *)
+      echo 'on|off'
+      return
+      ;;
+  esac
+  ${VIRSH} -c ${URI} list --${all_or}
+}
+
+
+remove_domain() {
+  list_domain_volumes "${1}"
+  read -p 'are you sure? (YES) '
+  [[ $REPLY = 'YES' ]] && \
+  ${VIRSH} -c ${URI} undefine --remove-all-storage --domain "${1}"
+}
+
+
+list_domain_volumes() {
+  ${VIRSH} -c ${URI} domblklist --details --domain "${1}"
+}
+
+
+info_host() {
+  echo "${URI}"
+}
+
+
+info_dom() {
+  ${VIRSH} -c ${URI} dominfo "${1}"
+}
+
+
+finish() {
+  echo -e '\nhave fun!'
+}
+
+
+main() {
+  trap finish exit
+  while :; do
+    while IFS="" read -r -e -p $'\e[44mv12h\e[0m > ' p; do
+      history -s "${p}" > /dev/null 2>&1
+      input=($p)
+
+      case "${input}" in
+        q)
+          exit 0
+          ;;
+        v)
+          set -x
+          ;;
+        u)
+          URI='qemu:///system'
+          ;;
+        U)
+          URI='qemu:///session'
+          ;;
+        i)
+          [[ -z "${input[1]}" ]] && info_host || info_dom "${input[1]}"
+          ;;
+        ls*)
+          list_domains ${input[1]}
+          ;;
+        touch*)
+          new_domain ${input[1]}
+          ;;
+        rm*)
+          remove_domain ${input[1]}
+          ;;
+        vls*)
+          list_domain_volumes ${input[1]}
+          ;;
+        /*)
+          ${VIRSH} -c ${URI} ${input[@]#/}
+          ;;
+        "")
+          set +x
+          ;;
+        *|h|help)
+          usage
+          ;;
+      esac
+
+    done
+  done
+}
+
+main "$@"
