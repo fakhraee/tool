@@ -5,7 +5,7 @@
 
 VIRSH='/usr/bin/virsh'
 URI='qemu:///system'
-bind -x '"\C-i": "vcomplete"' &> /dev/null
+bind -x '"\C-i\C-i": "vcomplete"' &> /dev/null
 #source /etc/bash_completion
 
 
@@ -119,6 +119,10 @@ main() {
           ;;
         /*)
           ${VIRSH} -c ${URI} ${input[@]#/}
+          ;;
+        !*)
+          cmd="${input[@]#!}"
+          /usr/bin/env bash -c "${cmd}"
           ;;
         "")
           set +x
