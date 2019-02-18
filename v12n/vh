@@ -1,32 +1,167 @@
 #!/usr/bin/env bash
 # @virt @virsh @ssh
-# echo -e 'ls\nq'|vh
+# echo -e 'ld\nq'|vh
 
-
+V12N='/v12n'
 VIRSH='/usr/bin/virsh'
 URI='qemu:///system'
-bind -x '"\C-i\C-i": "vcomplete"' &> /dev/null
-#source /etc/bash_completion
+bind -x '"\C-r": "source $0"' &> /dev/null
 
+usage() {
+  cat << EOF
+[h|help]
+  this help
 
-vcomplete() {
-  list_domains -1
-#  COMPREPLY=(hi bye)
-#  for completion in "${COMPREPLY[@]}"; do echo "$completion"; done | column
-#  compgen $COMPREPLY[@]
-#  complete -W "hi bye"
+[q|quit|exit]
+  quit
+
+[v]
+  verbose on. (enter to disable)
+
+[u|U]
+  system|session
+
+[list|ls|l] on|off
+  lists domains/pools/blocks based on where you are
+
+[ld]
+  list domain
+
+[lp]
+  list pools
+
+[lb]
+  list blocks
+
+[use|cd] doing/do_name|domain
+  doing: domain/pool/volume
+  to work on it
+
+[i]
+  info
+
+[add]
+  add
+
+[rm]
+  remove
+
+[attach|[detach]
+  a device to domain
+
+[:FUNC]
+  exec one of the underlying functions directly. empty to list them
+
+[/VIRSH_CMD]
+  exec virsh commands directly. empty to enter virsh shell
+
+[!COMMAND]
+  exec shell commands directly. empty to enter bash shell
+
+EOF
 }
 
 
-usage() {
-cat << EOF
-[ls] on|off
-  list machines
+use_what() {
+  a="${1%/*}"
+  z="${1#*/}"
+  [[ ${a} = ${z} ]] && z=''
+  doing="${a}"
+  do_name="${z}"
+  if [[ -n "${a}" ]] && [[ -z "${z}" ]] && [[ "${a}" != 'domain' ]]; then
+    if [[ "${a}" != 'pool' ]] && [[ "${a}" != 'volume' ]]; then
+      doing='domain' && do_name="${a}"
+    fi
+  fi
+}
 
-[vls] domain
-  list volumes of a domain
+
+info_what() {
+  case "${doing}" in
+    'pool')
+      info_pool
+      ;;
+    'domain')
+      info_domain
+      ;;
+    'volume')
+      info_volume
+      ;;
+    '')
+      info_host
+      ;;
+  esac
+}
+
+
+info_host() {
+  cat << EOF
+uri: ${URI}
+cpu: $(grep -c 'processor' /proc/cpuinfo)
+mem: $(free -h | awk '/^Mem:/{print $7,"/",$2}')
+virt-install: $(which virt-install)
+virt-resize: $(which virt-resize)
+qemu-img: $(which qemu-img)
 
 EOF
+}
+
+
+info_pool() {
+  ${VIRSH} -c ${URI} pool-info "${do_name}"
+}
+
+
+info_domain() {
+  ${VIRSH} -c ${URI} dominfo "${do_name}"
+}
+
+
+info_volume() {
+  true
+}
+
+
+list_what() {
+  case "${doing}" in
+    'pool')
+      [[ -n "${do_name}" ]] && list_volumes || list_pools "${1}"
+      ;;
+    'volume')
+      ;;
+    *|'domain')
+      [[ -n "${do_name}" ]] && list_domain_blocks || list_domains "${1}"
+      ;;
+  esac
+}
+
+
+# lp
+list_pools() {
+  LP='${VIRSH} -c ${URI} pool-list --details ${opts}'
+  case "${1}" in
+    -1)
+      ${VIRSH} -c ${URI} pool-list --name
+      ;;
+    on)
+      opts=''
+      eval $LP
+      ;;
+    off)
+      opts='--inactive'
+      eval $LP
+      ;;
+    '')
+      opts='--all'
+      eval $LP
+      ;;
+  esac
+}
+
+
+list_volumes() {
+  LV='${VIRSH} -c ${URI} vol-list --pool ${do_name} --details'
+  eval $LV
 }
 
 
@@ -54,26 +189,153 @@ list_domains() {
 }
 
 
-remove_domain() {
-  list_domain_volumes "${1}"
+# lb
+list_domain_blocks() {
+  LB='${VIRSH} -c ${URI} domblklist --details --domain ${do_name}'
+  if [[ -z "${doing}" ]]; then
+    for dom in $(list_domains -1); do
+      do_name="${dom}"
+      echo "${do_name}:"
+      eval $LB
+      do_name=''
+    done
+  elif [[ "${doing}" != 'domain' ]]; then
+    echo 'use domain'
+  else
+    eval $LB
+  fi
+}
+
+
+
+add_what() {
+  case "${doing}" in
+    'domain')
+      add_domain "${@}"
+      ;;
+    'pool')
+      add_pool "${@}"
+      ;;
+    'volume')
+      add_volume "${@}"
+      ;;
+  esac
+}
+
+
+add_domain() {
+  echo "creating pool: ${do_name}"
+  add_pool "${do_name}"
+  read -p 'chose method (iso|img|packer): ' add_dom_method
+  case "${add_dom_method}" in
+    iso)
+      add_domain_iso
+      ;;
+    img)
+      add_domain_img
+      ;;
+    packer)
+      add_domain_packer
+      ;;
+    *)
+      echo 'invalid choice'
+      ;;
+  esac
+}
+
+
+add_pool() {
+  [[ "${doing}" != 'pool' ]] && return
+  target="${V12N}/dom/${do_name}"
+  mkdir -p "${target}"
+  ${VIRSH} -c ${URI} "\
+    pool-define-as --name "${do_name}" --type dir --target "${target}"; \
+    pool-autostart "${do_name}"; \
+    pool-start "${do_name}" \
+  "
+}
+
+
+add_volume() {
+  ${VIRSH} -c ${URI} "\
+    vol-create-as --pool "${1}" \
+                  --name "${do_name}" \
+                  --capacity "${2}" \
+                  --format qcow2 \
+  "
+}
+
+
+add_domain_iso() {
+  read -e -p $'key=value (iso= cpu= mem=):\n' add_dom_iso_keyval
+  echo "${add_dom_iso_keyval}"
+}
+
+
+add_domain_image() {
+  read -e -p $'key=value (img= cpu= mem=):\n' add_dom_img_keyval
+  echo "${add_dom_img_keyval}"
+}
+
+
+add_domain_packer() {
+  true
+}
+
+
+rm_dom() {
+  echo "domain ${dom} volumes:"
+  list_domain_volumes "${dom}"
   read -p 'are you sure? (YES) '
-  [[ $REPLY = 'YES' ]] && \
-  ${VIRSH} -c ${URI} undefine --remove-all-storage --domain "${1}"
+  [[ "${REPLY}" = 'YES' ]] && \
+  ${VIRSH} -c ${URI} undefine --remove-all-storage --domain "${dom}"
+  rm_pool "${dom}"
 }
 
 
-list_domain_volumes() {
-  ${VIRSH} -c ${URI} domblklist --details --domain "${1}"
+rm_pool() {
+  ${VIRSH} -c ${URI} "\
+    pool-destroy "${do_name}"; \
+    pool-delete "${do_name}"; \
+    pool-undefine "${do_name}" \
+    "
 }
 
 
-info_host() {
-  echo "${URI}"
+attach() {
+  read -p 'attach (disk|net): ' attach_what
+  case "${attach_what}" in
+    disk)
+      attach_disk
+      ;;
+    net)
+      attach_net
+      ;;
+    *)
+      echo 'invalid choice'
+      ;;
+  esac
 }
 
 
-info_dom() {
-  ${VIRSH} -c ${URI} dominfo "${1}"
+attach_disk() {
+  read -e -p $'key=value (name= size= type=):\n' add_dom_img_keyval
+  # parse key val
+  #add_vol
+  #attach-disk ${vm-name} --source /v12n/dom/.../{img-name-here}
+  #                       --target vdb
+  #                       --cache none
+  # --driver qemu --subdriver qcow2 --targetbus virtio --persistent
+}
+
+
+attach_net() {
+  true
+}
+
+
+detach() {
+  true
 }
 
 
@@ -84,56 +346,81 @@ finish() {
 
 main() {
   trap finish exit
+  ps="v12h/${URI#qemu:///}/${doing}/${do_name}/"
   while :; do
-    while IFS="" read -r -e -p $'\e[44mv12h\e[0m > ' p; do
+    while IFS="" read -r -e -p $"$ps > " p; do
       history -s "${p}" > /dev/null 2>&1
       input=($p)
 
       case "${input}" in
-        q)
+        'q'|'quit'|'exit')
           exit 0
           ;;
-        v)
+        'v')
           set -x
           ;;
-        u)
+        'u')
           URI='qemu:///system'
           ;;
-        U)
+        'U')
           URI='qemu:///session'
           ;;
-        i)
-          [[ -z "${input[1]}" ]] && info_host || info_dom "${input[1]}"
+        'use'|'cd')
+          use_what "${input[1]}"
           ;;
-        ls*)
-          list_domains ${input[1]}
+        'l'|'ls'|'list')
+          list_what "${input[1]}"
           ;;
-        touch*)
-          new_domain ${input[1]}
+        'i')
+          info_what
           ;;
-        rm*)
-          remove_domain ${input[1]}
+        'lp')
+          list_pools "${input[1]}"
           ;;
-        vls*)
-          list_domain_volumes ${input[1]}
+        'ld')
+          list_domains
+          ;;
+        'lb')
+          list_domain_blocks
+          ;;
+        'add')
+          add_dom
+          ;;
+        'rm')
+          rm_dom
+          ;;
+        'attach')
+          attach
+          ;;
+        'detech')
+          detach
+          ;;
+        :*)
+          [[ -z "${input[@]#:}" ]] && declare -F | awk '{print $3}' || \
+          "${input[@]#:}"
           ;;
         /*)
-          ${VIRSH} -c ${URI} ${input[@]#/}
+          ${VIRSH} -c ${URI} "${input[@]#/}"
           ;;
         !*)
           cmd="${input[@]#!}"
+          [[ -z "${cmd}" ]] && cmd="cd ${V12N}; bash"
           /usr/bin/env bash -c "${cmd}"
           ;;
-        "")
+        '')
           set +x
           ;;
-        *|h|help)
+        \#*)
+          ;;
+        *|'h'|'help')
           usage
           ;;
       esac
+      ps="v12h/${URI#qemu:///}/${doing}/${do_name}/"
 
     done
   done
 }
+
 
 main "$@"
