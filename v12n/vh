@@ -4,9 +4,11 @@
 
 
 V12N='/v12n'
+URI='qemu:///session'
 VIRSH='/usr/bin/virsh'
 VXML='/usr/bin/virt-xml'
-URI='qemu:///session'
+VIRTBUILDER='/usr/bin/virt-builder'
+PACKER='/usr/bin/packer'
 #bind -x '"\C-r": "source $0"' &> /dev/null
 
 
@@ -157,22 +159,25 @@ info_what() {
 }
 
 
- info_host() {
+info_host() {
   cat << EOF
-host: $(hostname -f)
-uri: ${URI}
-cpu: $(grep -c 'processor' /proc/cpuinfo)
-mem: $(free -h | awk '/^Mem:/{print $7,"/",$2}')
-virt-install: $(which virt-install)
-virt-xml: $(which virt-xml)
-virt-resize: $(which virt-resize)
-qemu-img: $(which qemu-img)
+  host: $(hostname -f)
+  uri: ${URI}
+  cpu: $(grep -c 'processor' /proc/cpuinfo)
+  mem: $(free -h | awk '/^Mem:/{print $7,"/",$2}')
+  virsh: $(which virsh)
+  virt-xml: $(which virt-xml)
+  virt-builder: $(which virt-builder)
+  packer: $(which packer)
+  virt-resize: $(which virt-resize)
 
 EOF
 }
 
 
 info_pool() {
+  printf 'Path:\t\t'
+  ${VIRSH} -c ${URI} pool-dumpxml ${do_name} | awk -F'[><]' '/path/ {print $3}'
   ${VIRSH} -c ${URI} pool-info "${do_name}"
 }
 
@@ -460,7 +465,7 @@ term_what()  {
       if [[ -z "${do_name}" ]]; then
         echo 'no pool name' && return
       else
-        term_pool "${do_name}"
+        term_pool "${1}"
       fi
       ;;
     'domain')
@@ -505,6 +510,21 @@ term_domain() {
     destroy ${do_name}; \
     undefine --domain ${do_name} \
   " 2> /dev/null
+}
+
+
+build_packer() {
+  packer_output="${2}"
+  [[ ${doing} = 'pool' ]] && \
+  packer_output="$(${VIRSH} -c ${URI} pool-dumpxml ${do_name} | \
+                 awk -F'[><]' '/path/ {print $3}')"
+  [[ -z "${packer_files}" ]] && \
+  echo 'set packer-files PATH' && return
+  [[ -z "${packer_output}" ]] && \
+  echo 'build_packer OUTPUT' && return
+  cd "${packer_output}" && cp -r ${packer_files}/* . && \
+  cd "${packer_input##*/}" && vim vars.json && \
+  packer build -var-file=vars.json -var output=. debian.json
 }
 
 
@@ -618,13 +638,17 @@ main() {
 
 # extras
 v12n_up() {
-  mkdir -p /v12n/{domain,iso,share,trash} && \
+  mkdir -p /v12n/{domain,etc,iso,share,trash} && \
   v12n_dir=1
 
   sudo apt update && sudo apt-get --yes --no-install-recommends install \
   atop htop git screen udhcpd packer parted qemu-utils qemu-kvm \
   libguestfs-tools libvirt-clients libvirt-daemon-system virtinst && \
   v12n_package=1
+
+  #sudo echo "allow br0" >>/etc/qemu/bridge.conf && \
+  #sudo ip address flush br0 scope global && \
+  #sudo setcap 'cap_ne_admin+ep' /usr/lib/qemu/qemu-bridge-helper
 }
 
 
