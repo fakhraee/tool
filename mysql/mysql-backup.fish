@@ -1,21 +1,20 @@
 #!/usr/bin/env fish
 
 function help -d 'show help'
-  echo \
-  --login,\t\t-l\t\t[user:pass]\n\
-  \b--server,\t\t-s\t\t[server:port]\n\
-    \t'-s' 1.2.3.4:3306\n\t'-s' 1.2.3.4\n\t-s :3307\n\
-  \b--interval,\t-i\t\t[table_name]
+  echo mysql-backup.fish \
+       [-s server:port] [-l user:pass] [-e send_host:send_port] [-n dryrun]
   exit
 end
 
 
 function main
-  set options 'h/help' 's/server=' 'l/login=' 'i/interval=' \
-              'e/send=' 'c/clean=' 'v/verbose' 'n/dryrun'
+  set -g mysqldump /usr/bin/mysqldump
+  set options 'h/help' 's/server=' 'l/login=' \
+              'e/send=' 'v/verbose' 'n/dryrun'
   argparse -n mysql-backup $options -- $argv; or return
 
   set -q _flag_help; and help
+  set -q _flag_clean; and set -g clean_mtime $_flag_clean
   set -q _flag_verbose; and set -g verbose
   set -q _flag_dryrun; and set -g dryrun
   if set -q _flag_server
@@ -28,23 +27,17 @@ function main
     set -g login_user $login_array[1]
     set -g login_pass $login_array[2]
   end
-  set -g interval $_flag_interval
-  set -g mysqldump /usr/bin/mysqldump
-  test -z "$server_name"; and set -g server_name '127.0.0.1'
-  if test -z "$server_port"; or test "$server_port" = "$server_name"
-    set -g server_port '3306'
-  end
-  test -z "$login_user"; and set -g login_user 'root'
   if set -q _flag_send
     set send_array (string split -m1 : $_flag_send)
     set -g rsync_exec $send_array[1]
     set -g rsync_dest $send_array[2]
   end
-  if set -q _flag_interval
-    interval $_flag_interval $argv
-  else
-    mysql_dump $argv
+  test -z "$server_name"; and set -g server_name '127.0.0.1'
+  if test -z "$server_port"; or test "$server_port" = "$server_name"
+    set -g server_port '3306'
   end
+  test -z "$login_user"; and set -g login_user 'root'
+  mysql_dump $argv
 end
 
 
@@ -78,23 +71,19 @@ function mysql_dump -d 'the backup'
       echo sending...
     end
     if not set -q dryrun
-      eval ($send_rsync)
+      eval ($send_rsync); and \
+      if set -q clean_up
+        echo cleaning up in $clean_path
+        clean_up
+      end
     end
   end
 end
 
-function interval
-  while true
-    mysql_dump $argv[2..-1]
-    echo sleeping for $argv[1] on (date +%H:%M)...
-    sleep $argv[1]
-  end
-end
 
-
-function clean_up -d 'remove older than'
-  #find $path -maxdepth 1 -iname "*.sql.bz2" -mtime 2.5 -delete
-end
+#function clean_up -d 'remove older than'
+#  find . -maxdepth 1 -iname "*.sql.bz2" -mtime $clean_mtime -delete
+#end
 
 
 main $argv
