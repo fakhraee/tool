@@ -1,0 +1,25 @@
+#!/usr/bin/env bash
+
+loop="/dev/loop0"
+
+open() {
+  losetup ${loop} ${1} || exit 1
+  mountp="$(mktemp -d -p .)" || exit 1
+  mount ${loop}p2 "${mountp}"
+  for i in {dev,proc,sys}; do mount --bind /${i} "${mountp}/${i}"; done
+}
+
+
+close() {
+  for i in {dev,proc,sys}; do umount "${1}/${i}"; done
+  umount "${1}"
+  rmdir "${1}"
+  losetup -d ${loop}
+}
+
+
+case ${1} in
+  open) open "$2";;
+  close) close "$2";;
+  *|'') echo 'open | close'
+esac

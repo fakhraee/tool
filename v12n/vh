@@ -5,8 +5,9 @@
 
 V12N='/v12n'
 URI='qemu:///session'
-VIRSH='/usr/bin/virsh'
-VXML='/usr/bin/virt-xml'
+VIRTINST='/usr/bin/virt-install'
+VIRSH='/usr/bin/virsh --quiet'
+VXML='/usr/bin/virt-xml --quiet'
 VIRTBUILDER='/usr/bin/virt-builder'
 PACKER='/usr/bin/packer'
 #bind -x '"\C-r": "source $0"' &> /dev/null
@@ -350,11 +351,14 @@ rmv() {
 
 init_what() {
   case "${doing}" in
+    'pool')
+      init_pool "${@}"
+      ;;
     'domain')
       init_domain "${@}"
       ;;
-    'pool')
-      init_pool "${@}"
+    'network')
+      init_network "${@}"
       ;;
   esac
 }
@@ -374,40 +378,62 @@ init_pool() {
 
 init_domain() {
   temp_define_xml="$(mktemp)"
-  virt-install --print-xml --connect $URI --virt-type kvm --cpu host \
-               --import --graphics vnc --memory 1 --network none \
-               --name "${do_name}" --disk "${1}" > "${temp_define_xml}" && \
-  ${VIRSH} -c ${URI} --quiet define --file "${temp_define_xml}" && \
-  ${VXML} -c ${URI} --quiet ${do_name} --remove-device --input tablet && \
+  ${VIRTINST} --print-xml --connect $URI --import --virt-type kvm --cpu host \
+              --graphics vnc --memory 128 --name "${do_name}" --network none \
+              --disk "${1}" > "${temp_define_xml}" && \
+  ${VIRSH} -c ${URI} define --file "${temp_define_xml}" && \
+  ${VXML} -c ${URI} ${do_name} --remove-device --input tablet && \
   rm -f "${temp_define_xml}" && \
   echo -e "Domain ${do_name} initiated\n"
 }
 
 
+init_network() {
+  [[ "${doing}" != 'network' ]] && return
+  [[ -z "${1}" ]] && echo 'no bridge name specified' && return
+  br_name="${1}"
+  temp_define_xml="$(mktemp)"
+  echo -e "\
+    <network><name>${do_name}</name><forward mode='bridge'/>\
+    <bridge name=${br_name}/><virtualport type='openvswitch'/></network>
+  " > "${temp_define_xml}"
+  ${VIRSH} -c ${URI} net-define "${temp_define_xml}" && \
+  rm -f "${temp_define_xml}"
+}
+
+
 set_kv() {
+  [[ -z ${do_name} ]] && echo 'domain not specified' && return
   key="${1}"
   val1="${2}"
   val2="${3}"
   case "${key}" in
     'cpu')
-      ${VXML} -c ${URI} --quiet ${do_name} --edit \
+      ${VXML} -c ${URI} ${do_name} --edit \
       --vcpus vcpus="${val1}",maxvcpus="${val2}"
       ;;
     'memory')
-      ${VXML} -c ${URI} --quiet ${do_name} --edit \
+      ${VXML} -c ${URI} ${do_name} --edit \
       --memory memory="${val1}",maxmemory="${val2}"
       ;;
     'disk')
-      ${VXML} -c ${URI} --quiet ${do_name} \
-      --add-device --disk "${val1}",cache=none,io=native,bus=virtio
+      ${VXML} -c ${URI} ${do_name} \
+      --add-device --disk "${val1}",bus=virtio
       ;;
     'iso')
-      ${VXML} -c ${URI} --quiet ${do_name} \
-      --add-device --disk "${val1}",cache=none,io=native,bus=ide,format=raw,readonly=true,device=cdrom
+      ${VXML} -c ${URI} ${do_name} \
+      --add-device --disk "${val1}",bus=ide,format=raw,readonly=true,device=cdrom && \
+      ${VXML} -c ${URI} ${do_name} --edit --boot cdrom
+      # make it bootable
       ;;
     'iface')
       ${VXML} -c ${URI} --quiet ${do_name} \
-      --add-device --network "${val1}",model=virtio
+      --add-device --network "${val1}",source="${val2}",model=virtio
+      ;;
+    '')
+      echo "set [cpu | memory] min max"
+      echo "set [disk | iso] path"
+      echo "set iface [network | bridge] [default | bridge_namei]"
       ;;
     *)
       echo -e "invalid key: ${key}\n"
@@ -638,13 +664,17 @@ main() {
 
 # extras
 v12n_up() {
-  mkdir -p /v12n/{domain,etc,iso,share,trash} && \
+  mkdir -p /v12n/{domain,iso,share,target,trash} && \
   v12n_dir=1
 
   sudo apt update && sudo apt-get --yes --no-install-recommends install \
-  atop htop git screen udhcpd packer parted qemu-utils qemu-kvm \
+  atop htop git screen dnsmasq packer parted qemu-utils qemu-kvm \
   libguestfs-tools libvirt-clients libvirt-daemon-system virtinst && \
   v12n_package=1
+
+  #sudo apt install openvswitch-switch && sudo ovs-vsctl add-br br0 && \
+  #sudo ovs-vsctl add-port br0 IF
+  #net-define net-start net-autostart
 
   #sudo echo "allow br0" >>/etc/qemu/bridge.conf && \
   #sudo ip address flush br0 scope global && \

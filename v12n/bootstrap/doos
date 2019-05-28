@@ -1,0 +1,11 @@
+#!/usr/bin/env bash
+
+release="buster"
+target="${1}"
+packages=(openssh-server linux-image-amd64 rsync htop less vim screen git grc
+          xtail less vim mtr-tiny locales)
+
+for i in ${packages[@]}; do pkgs+="$i,"; done
+debootstrap --arch=amd64 --include="$pkgs"sudo \
+            --components main,contrib,non-free \
+            ${release} "${target}" http://debian.asis.ai/debian/

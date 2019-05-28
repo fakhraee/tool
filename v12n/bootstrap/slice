@@ -1,0 +1,14 @@
+#!/usr/bin/env bash
+
+loop="/dev/loop0"
+parted="parted --script"
+losetup ${loop} "${1}" || exit 1
+
+${parted} ${loop} mklabel gpt
+${parted} ${loop} mkpart grub 0% 2m
+${parted} ${loop} set 1 bios on
+${parted} ${loop} mkpart os ext4 2m 100%
+
+partprobe
+mkfs.ext4 -q ${loop}p2
+losetup -d ${loop}

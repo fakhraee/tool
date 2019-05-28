@@ -1,0 +1,28 @@
+#!/usr/bin/env bash
+
+loop="/dev/loop0"
+provision="locale-gen;
+           echo ${2} >/etc/hostname;
+           passwd;
+           DEBIAN_FRONTEND=noninteractive \
+           apt-get -qq --no-install-recommends install grub-pc >/dev/null&&
+           grub-install --target=i386-pc --boot-directory=/boot/ ${loop}&&
+           update-grub"
+
+mountp="$(mktemp -d -p .)" || exit 1
+losetup ${loop} ${2} || exit 1
+mount ${loop}p2 ${mountp} && echo 'mount done'
+cp -a "${1}"/* "${mountp}"/ && echo 'copy done'
+for i in {dev,proc,sys}; do mount --bind /${i} "${mountp}"/$i; done
+ln -s /proc/mounts "${mountp}"/etc/mtab
+
+uuid=$(blkid -o value -s UUID ${loop}p2)
+echo -e "UUID=${uuid} /\text4 errors=remount-ro\t0 1" >"${mountp}"/etc/fstab
+sed -i '/# en_US.UTF-8/s/^#//g' "${mountp}"/etc/locale.gen
+echo 'LANG="en_US.UTF-8"' >"${mountp}"/etc/default/locale
+echo "${provision}" >"${mountp}"/prov
+chroot "${mountp}" /bin/sh -c 'chmod +x /prov && /prov && rm -f /prov'
+
+sync
+for i in {dev,proc,sys}; do umount "${mountp}"/$i; done
+umount ${mountp} && rmdir ${mountp} && losetup -d ${loop} && echo 'all clean'
