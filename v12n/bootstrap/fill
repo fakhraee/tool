@@ -1,18 +1,25 @@
 #!/usr/bin/env bash
 
 loop="/dev/loop0"
-provision="locale-gen;
-           echo ${2} >/etc/hostname;
-           passwd;
-           DEBIAN_FRONTEND=noninteractive \
-           apt-get -qq --no-install-recommends install grub-pc >/dev/null&&
-           grub-install --target=i386-pc --boot-directory=/boot/ ${loop}&&
-           update-grub"
+disk_image="${1}"
+target="${2}"
+
+provision="
+  locale-gen;
+  echo ${disk_image} >/etc/hostname;
+  passwd;
+  DEBIAN_FRONTEND=noninteractive \
+  apt-get -qq --no-install-recommends install grub-pc >/dev/null&&
+  grub-install --target=i386-pc --boot-directory=/boot/ ${loop}&&
+  sed -i '/GRUB_TIMEOUT/s/5/0/g' /etc/default/grub&&
+  sed -i 's/quiet/console=ttyS0/g' /etc/default/grub&&
+  update-grub
+"
 
 mountp="$(mktemp -d -p .)" || exit 1
-losetup ${loop} ${2} || exit 1
+losetup ${loop} ${disk_image} || exit 1
 mount ${loop}p2 ${mountp} && echo 'mount done'
-cp -a "${1}"/* "${mountp}"/ && echo 'copy done'
+cp -a "${target}"/* "${mountp}"/ && echo 'copy done'
 for i in {dev,proc,sys}; do mount --bind /${i} "${mountp}"/$i; done
 ln -s /proc/mounts "${mountp}"/etc/mtab
 
