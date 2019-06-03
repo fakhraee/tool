@@ -201,7 +201,11 @@ info_domain() {
 list_what() {
   case "${doing}" in
     'pool')
-      [[ -n "${do_name}" ]] && list_volumes || list_pools "${1}"
+      if [[ -n "${do_name}" ]]; then
+        list_volumes "${1}"
+        return
+      fi
+      list_pools
       ;;
     'network')
       list_networks
@@ -422,21 +426,40 @@ set_kv() {
       ;;
     'iso')
       ${VXML} -c ${URI} ${do_name} \
-      --add-device --disk "${val1}",bus=ide,format=raw,readonly=true,device=cdrom && \
-      ${VXML} -c ${URI} ${do_name} --edit --boot cdrom
+      --add-device --disk "${val1}",bus=ide,format=raw,readonly=true,device=cdrom
       # make it bootable
       ;;
-    'iface')
-      ${VXML} -c ${URI} --quiet ${do_name} \
-      --add-device --network "${val1}",source="${val2}",model=virtio
+    'nic')
+      case ${val1} in
+      'nat')
+        ${VXML} -c ${URI} ${do_name} \
+        --add-device --network type=network,source="${val2}",model=virtio
+        ;;
+      'bridge')
+        ${VXML} -c ${URI} ${do_name} \
+        --add-device --network type=bridge,source="${val2}",model=virtio
+        ;;
+      'ovs')
+        ${VXML} -c ${URI} ${do_name} \
+        --add-device --network type=bridge,source="${val2}",virtualport_type=openvswitch,model=virtio,driver_name=vhost
+        ;;
+      '')
+        echo 'nat | bridge | ovs'
+        ;;
+      esac
+      ;;
+    'boot')
+      [[ ${val1} = 'disk' ]] && val1='hd'
+      ${VXML} -c ${URI} ${do_name} --edit --boot ${val1}
       ;;
     '')
       echo "set [cpu | memory] min max"
       echo "set [disk | iso] path"
-      echo "set iface [network | bridge] [default | bridge_namei]"
+      echo "set nic [nat | bridge | ovs] [network_name | bridge_name | ovs bridge name]"
+      echo -e "set boot [hd | cdrom]\n"
       ;;
     *)
-      echo -e "invalid key: ${key}\n"
+      echo -e "invalid key value: ${key} ${val}\n"
       ;;
   esac
 }
@@ -449,8 +472,11 @@ unset_kv() {
     'disk'|'iso')
       ${VXML} -c ${URI} ${do_name} --remove-device --disk "${val}"
       ;;
-    'iface')
+    'nic')
       ${VXML} -c ${URI} ${do_name} --remove-device --network mac="${val}"
+      ;;
+    '*')
+      echo -e "invalid key value: ${key} ${val}\n"
   esac
 }
 
@@ -664,17 +690,31 @@ main() {
 
 # extras
 v12n_up() {
-  mkdir -p /v12n/{domain,iso,share,target,trash} && \
-  v12n_dir=1
+  pkgs=(
+    atop htop git screen dnsmasq packer parted qemu-utils qemu-kvm
+    libguestfs-tools libvirt-clients libvirt-daemon-system
+  )
 
-  sudo apt update && sudo apt-get --yes --no-install-recommends install \
-  atop htop git screen dnsmasq packer parted qemu-utils qemu-kvm \
-  libguestfs-tools libvirt-clients libvirt-daemon-system virtinst && \
-  v12n_package=1
+  mkdir -p /v12n/{domain,iso,share,target,trash} && v12n_dirs=1
 
-  #sudo apt install openvswitch-switch && sudo ovs-vsctl add-br br0 && \
-  #sudo ovs-vsctl add-port br0 IF
-  #net-define net-start net-autostart
+  read -p 'using ovs br? (yes) '
+  if [[ ${REPLY} = 'yes' ]]; then
+    packages[-1]+=" openvwitch-switch"
+    cat<< EOL >>/tmp/.ovs.xml
+<network>
+  <name>ovs</name>
+  <forward mode='bridge'/>
+  <bridge name='ovs-br'/>
+  <virtualport type='openvswitch'/>
+</network>
+EOL
+  ${VIRSH} -c ${URI} net-define /tmp/.ovs.xml
+  #sudo ovs-vsctl add-br ovs-br && sudo ovs-vsctl add-port ovs-br IF
+  fi
+
+  sudo apt update && sudo apt-get --yes --no-install-recommends install $pkgs && \
+  v12n_packages=1
+
 
   #sudo echo "allow br0" >>/etc/qemu/bridge.conf && \
   #sudo ip address flush br0 scope global && \
