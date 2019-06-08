@@ -1,9 +1,9 @@
 #!/usr/bin/env bash
 # @virt @virsh @ssh
-# echo -e 'ld\nq'|vh
+# echo -e 'ld\nq'|ev
 
 
-V12N='/v12n'
+EVD='/ev'
 URI='qemu:///session'
 VIRTINST='/usr/bin/virt-install'
 VIRSH='/usr/bin/virsh --quiet'
@@ -370,7 +370,7 @@ init_what() {
 
 init_pool() {
   [[ "${doing}" != 'pool' ]] && return
-  [[ -z "${1}" ]] && target="${V12N}/domain/${do_name}" || target="${1}"
+  [[ -z "${1}" ]] && target="${EVD}/domain/${do_name}" || target="${1}"
   mkdir -p "${target}"
   ${VIRSH} -c ${URI} "\
     pool-define-as --name "${do_name}" --type dir --target "${target}"; \
@@ -593,9 +593,9 @@ main() {
   count=0
   trap finish SIGINT
 
-  ps="v12h/${URI#qemu:///}/${doing}/${do_name}/"
+  ps="ev/${URI#qemu:///}/${doing}/${do_name}/"
   while IFS="" read -r -e -p $"$ps > "; do
-    history -n /tmp/.v12h_history
+    history -n /tmp/.ev_history
     history -s "${REPLY}" 2>&1
     input=($REPLY)
 
@@ -669,7 +669,7 @@ main() {
         ;;
       !*)
         cmd="${input[@]#!}"
-        [[ -z "${cmd}" ]] && cmd="cd ${V12N}; bash"
+        [[ -z "${cmd}" ]] && cmd="cd ${EVD}; bash"
         /usr/bin/env bash -c "${cmd}"
         ;;
       '')
@@ -681,21 +681,21 @@ main() {
         usage | less
         ;;
     esac
-    ps="v12h/${URI#qemu:///}/${doing}/${do_name}/"
+    ps="ev/${URI#qemu:///}/${doing}/${do_name}/"
 
   done
-  history -a /tmp/.v12h_history
+  history -a /tmp/.ev_history
 }
 
 
 # extras
-v12n_up() {
+ev_up() {
   pkgs=(
     atop htop git screen dnsmasq packer parted qemu-utils qemu-kvm
     libguestfs-tools libvirt-clients libvirt-daemon-system
   )
 
-  mkdir -p /v12n/{domain,iso,share,target,trash} && v12n_dirs=1
+  mkdir -p "${EVD}"/{domain,iso,share,target,trash} && ev_dirs=1
 
   read -p 'using ovs br? (yes) '
   if [[ ${REPLY} = 'yes' ]]; then
@@ -713,7 +713,7 @@ EOL
   fi
 
   sudo apt update && sudo apt-get --yes --no-install-recommends install $pkgs && \
-  v12n_packages=1
+  ev_packages=1
 
 
   #sudo echo "allow br0" >>/etc/qemu/bridge.conf && \
