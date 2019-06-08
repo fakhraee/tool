@@ -2,7 +2,7 @@
 
 release="buster"
 target="${1}"
-packages=(openssh-server linux-image-amd64 rsync htop less vim screen git grc
+packages=(openssh-server linux-image-amd64 htop less vim screen git grc
           xtail less vim mtr-tiny locales)
 
 for i in ${packages[@]}; do pkgs+="$i,"; done
